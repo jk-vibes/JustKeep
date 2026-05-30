@@ -1,0 +1,246 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile with configuration settings",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "avatar": { "type": "string" },
+        "settings": {
+          "type": "object",
+          "properties": {
+            "monthlyIncome": { "type": "number" },
+            "split": {
+              "type": "object",
+              "properties": {
+                "Needs": { "type": "number" },
+                "Wants": { "type": "number" },
+                "Savings": { "type": "number" }
+              }
+            },
+            "isOnboarded": { "type": "boolean" },
+            "appTheme": { "type": "string" },
+            "isCloudSyncEnabled": { "type": "boolean" },
+            "currency": { "type": "string" },
+            "density": { "type": "string" },
+            "hasLoadedMockData": { "type": "boolean" },
+            "dataFilter": { "type": "string" }
+          }
+        },
+        "notifiedBudgetGoalIds": {
+          "type": "object"
+        }
+      },
+      "required": ["id", "name", "email"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Individual expense records tracked under users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "category": { "type": "string" },
+        "originalCategory": { "type": "string" },
+        "mainCategory": { "type": "string" },
+        "subCategory": { "type": "string" },
+        "paymentMethod": { "type": "string" },
+        "note": { "type": "string" },
+        "merchant": { "type": "string" },
+        "isConfirmed": { "type": "boolean" },
+        "sourceAccountId": { "type": "string" },
+        "isMock": { "type": "boolean" },
+        "isImported": { "type": "boolean" },
+        "billId": { "type": "string" },
+        "ruleId": { "type": "string" },
+        "isAIUpgraded": { "type": "boolean" },
+        "isAvoid": { "type": "boolean" },
+        "isHiddenCharge": { "type": "boolean" },
+        "isStatementTransaction": { "type": "boolean" }
+      },
+      "required": ["id", "amount", "date", "category", "mainCategory", "isConfirmed"]
+    },
+    "Income": {
+      "title": "Income",
+      "description": "Individual income records tracked under users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "type": { "type": "string" },
+        "paymentMethod": { "type": "string" },
+        "note": { "type": "string" },
+        "targetAccountId": { "type": "string" },
+        "isMock": { "type": "boolean" },
+        "isImported": { "type": "boolean" }
+      },
+      "required": ["id", "amount", "date", "type"]
+    },
+    "WealthItem": {
+      "title": "WealthItem",
+      "description": "Individual asset or liability under users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "category": { "type": "string" },
+        "group": { "type": "string" },
+        "name": { "type": "string" },
+        "alias": { "type": "string" },
+        "accountNumber": { "type": "string" },
+        "value": { "type": "number" },
+        "limit": { "type": "number" },
+        "emiAmount": { "type": "number" },
+        "maturityDate": { "type": "string" },
+        "date": { "type": "string" },
+        "isMock": { "type": "boolean" },
+        "isImported": { "type": "boolean" },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "date": { "type": "string" },
+              "value": { "type": "number" }
+            }
+          }
+        }
+      },
+      "required": ["id", "type", "category", "name", "value", "date"]
+    },
+    "Bill": {
+      "title": "Bill",
+      "description": "Bill / Obligation tracking records under users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "amount": { "type": "number" },
+        "dueDate": { "type": "string" },
+        "merchant": { "type": "string" },
+        "category": { "type": "string" },
+        "mainCategory": { "type": "string" },
+        "subCategory": { "type": "string" },
+        "isPaid": { "type": "boolean" },
+        "frequency": { "type": "string" },
+        "image": { "type": "string" },
+        "note": { "type": "string" },
+        "accountId": { "type": "string" },
+        "isMock": { "type": "boolean" },
+        "isImported": { "type": "boolean" }
+      },
+      "required": ["id", "amount", "dueDate", "merchant", "category", "mainCategory", "isPaid", "frequency"]
+    },
+    "BudgetItem": {
+      "title": "BudgetItem",
+      "description": "Budget limit goals under users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "amount": { "type": "number" },
+        "bucket": { "type": "string" },
+        "category": { "type": "string" },
+        "subCategory": { "type": "string" },
+        "isRecurringLink": { "type": "string" },
+        "isMock": { "type": "boolean" },
+        "isImported": { "type": "boolean" }
+      },
+      "required": ["id", "name", "amount", "bucket", "category"]
+    },
+    "BudgetRule": {
+      "title": "BudgetRule",
+      "description": "Keyword rules for auto categorization under users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "keyword": { "type": "string" },
+        "category": { "type": "string" },
+        "mainCategory": { "type": "string" },
+        "subCategory": { "type": "string" },
+        "isImported": { "type": "boolean" },
+        "isMock": { "type": "boolean" },
+        "isManual": { "type": "boolean" }
+      },
+      "required": ["id", "keyword", "category", "mainCategory"]
+    },
+    "RecurringItem": {
+      "title": "RecurringItem",
+      "description": "Subscriptions or recurring expenditures tracked under users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "amount": { "type": "number" },
+        "bucket": { "type": "string" },
+        "category": { "type": "string" },
+        "subCategory": { "type": "string" },
+        "note": { "type": "string" },
+        "merchant": { "type": "string" },
+        "frequency": { "type": "string" },
+        "nextDueDate": { "type": "string" },
+        "accountId": { "type": "string" },
+        "isMock": { "type": "boolean" },
+        "isImported": { "type": "boolean" }
+      },
+      "required": ["id", "amount", "bucket", "category", "frequency", "nextDueDate"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Activity, AI and system notifications under users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "read": { "type": "boolean" },
+        "severity": { "type": "string" },
+        "metadata": { "type": "object" }
+      },
+      "required": ["id", "type", "title", "message", "timestamp", "read"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "The user profile and settings"
+    },
+    "/users/{userId}/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Expenses under individual user"
+    },
+    "/users/{userId}/incomes/{incomeId}": {
+      "schema": "Income",
+      "description": "Incomes under individual user"
+    },
+    "/users/{userId}/wealthItems/{wealthItemId}": {
+      "schema": "WealthItem",
+      "description": "Assets and liabilities under individual user"
+    },
+    "/users/{userId}/bills/{billId}": {
+      "schema": "Bill",
+      "description": "Bills/Obligations under individual user"
+    },
+    "/users/{userId}/budgetItems/{budgetItemId}": {
+      "schema": "BudgetItem",
+      "description": "Budgets/Limits under individual user"
+    },
+    "/users/{userId}/rules/{ruleId}": {
+      "schema": "BudgetRule",
+      "description": "Categorization rules under individual user"
+    },
+    "/users/{userId}/recurringItems/{recurringItemId}": {
+      "schema": "RecurringItem",
+      "description": "Recurring expenditures/subscriptions under individual user"
+    },
+    "/users/{userId}/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "System/AI messages for individual user"
+    }
+  }
+}

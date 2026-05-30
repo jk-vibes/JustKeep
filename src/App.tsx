@@ -30,6 +30,16 @@ import { DEFAULT_SPLIT, DEFAULT_CATEGORIES, getCurrencySymbol } from './constant
 import { triggerHaptic } from './utils/haptics';
 import { parseSmsLocally } from './utils/smsParser';
 import { generate12MonthData } from './utils/mockData';
+import { auth } from './services/firebase';
+import { 
+  saveUserProfile, 
+  getUserProfile, 
+  subscribeCollection, 
+  setDocItem, 
+  deleteDocItem, 
+  batchWriteItems, 
+  batchDeleteItems 
+} from './services/db';
 import { getFatherlyAdvice, batchProcessNewTransactions } from './services/geminiService';
 
 const STORAGE_KEY = 'jk_budget_data_whole_num_v12';
@@ -576,7 +586,101 @@ const App: React.FC = () => {
       }
     }
     setIsLoading(false);
+
+    // Bind Firebase user tracking tunnel
+    const unsubscribe = auth.onAuthStateChanged((fbUser) => {
+      if (fbUser) {
+        setUser({
+          id: fbUser.uid,
+          name: fbUser.displayName || 'Guest User',
+          email: fbUser.email || 'guest@local.host',
+          avatar: fbUser.photoURL || 'https://api.dicebear.com/7.x/bottts/svg?seed=' + fbUser.uid,
+        });
+        setIsAuthenticated(true);
+      } else {
+        setUser(null);
+        setIsAuthenticated(false);
+      }
+    });
+    return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user?.id) return;
+
+    getUserProfile(user.id).then((profileDoc: any) => {
+      if (profileDoc) {
+        if (profileDoc.settings) {
+          setSettings(prev => ({ ...prev, ...profileDoc.settings }));
+        }
+        if (profileDoc.notifiedBudgetGoalIds) {
+          setNotifiedBudgetGoalIds(profileDoc.notifiedBudgetGoalIds);
+        }
+      } else {
+        saveUserProfile(user.id, {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          avatar: user.avatar || '',
+          settings: { ...settings, isCloudSyncEnabled: true }
+        });
+      }
+    });
+
+    const unsubscribers: (() => void)[] = [];
+
+    const setupSync = (
+      colName: string,
+      currentLocalList: any[],
+      stateSetter: React.Dispatch<React.SetStateAction<any[]>>
+    ) => {
+      let isFirstEmitted = true;
+      const unsub = subscribeCollection(
+        user.id!,
+        colName,
+        (fbItems) => {
+          if (isFirstEmitted) {
+            isFirstEmitted = false;
+            // Seed cloud if empty and local storage offline cache exists
+            if (fbItems.length === 0 && currentLocalList.length > 0) {
+              const nonMock = currentLocalList.filter(item => !item.isMock);
+              if (nonMock.length > 0) {
+                batchWriteItems(user.id!, colName, nonMock);
+                return;
+              }
+            }
+          }
+          stateSetter(prev => {
+            const mocks = prev.filter(item => item.isMock);
+            return [...fbItems, ...mocks];
+          });
+        }
+      );
+      unsubscribers.push(unsub);
+    };
+
+    setupSync('expenses', expenses, setExpenses);
+    setupSync('incomes', incomes, setIncomes);
+    setupSync('wealthItems', wealthItems, setWealthItems);
+    setupSync('bills', bills, setBills);
+    setupSync('budgetItems', budgetItems, setBudgetItems);
+    setupSync('rules', rules, setRules);
+    setupSync('recurringItems', recurringItems, setRecurringItems);
+    setupSync('notifications', notifications, setNotifications);
+
+    return () => {
+      unsubscribers.forEach(unsub => unsub());
+    };
+  }, [isAuthenticated, user?.id]);
+
+  useEffect(() => {
+    if (isAuthenticated && user?.id && !isLoading) {
+      saveUserProfile(user.id, {
+        settings: settings,
+        notifiedBudgetGoalIds: notifiedBudgetGoalIds
+      });
+    }
+  }, [settings, notifiedBudgetGoalIds, isAuthenticated, user?.id, isLoading]);
 
   useEffect(() => { if (!isLoading && !isResetting) { localStorage.setItem(STORAGE_KEY, JSON.stringify({ settings, expenses, incomes, wealthItems, bills, user, budgetItems, rules, recurringItems, notifications, notifiedBudgetGoalIds })); } }, [settings, expenses, incomes, wealthItems, bills, user, budgetItems, rules, recurringItems, notifications, notifiedBudgetGoalIds, isLoading, isResetting]);
 
@@ -791,6 +895,241 @@ const App: React.FC = () => {
     setStagedImportItems(null); showToast(`Successfully synchronized ${finalItems.length} records.`, 'success');
   };
 
+  const addExpenseItem = useCallback((e: Expense) => {
+    setExpenses(prev => {
+      if (prev.some(x => x.id === e.id)) return prev;
+      return [e, ...prev];
+    });
+    if (isAuthenticated && user?.id && !e.isMock) {
+      setDocItem(user.id, 'expenses', e.id, e);
+    }
+  }, [isAuthenticated, user?.id]);
+
+  const addRecurringItem = useCallback((r: RecurringItem) => {
+    setRecurringItems(prev => {
+      if (prev.some(x => x.id === r.id)) return prev;
+      return [r, ...prev];
+    });
+    if (isAuthenticated && user?.id && !r.isMock) {
+      setDocItem(user.id, 'recurringItems', r.id, r);
+    }
+  }, [isAuthenticated, user?.id]);
+
+  const addIncomeItem = useCallback((i: Income) => {
+    setIncomes(prev => {
+      if (prev.some(x => x.id === i.id)) return prev;
+      return [i, ...prev];
+    });
+    if (isAuthenticated && user?.id && !i.isMock) {
+      setDocItem(user.id, 'incomes', i.id, i);
+    }
+  }, [isAuthenticated, user?.id]);
+
+  const addBillItem = useCallback((b: Bill) => {
+    setBills(prev => {
+      if (prev.some(x => x.id === b.id)) return prev;
+      return [...prev, b];
+    });
+    if (isAuthenticated && user?.id && !b.isMock) {
+      setDocItem(user.id, 'bills', b.id, b);
+    }
+  }, [isAuthenticated, user?.id]);
+
+  const addWealthItem = useCallback((w: WealthItem) => {
+    setWealthItems(prev => {
+      if (prev.some(x => x.id === w.id)) return prev;
+      return [...prev, w];
+    });
+    if (isAuthenticated && user?.id && !w.isMock) {
+      setDocItem(user.id, 'wealthItems', w.id, w);
+    }
+  }, [isAuthenticated, user?.id]);
+
+  const addBudgetItem = useCallback((b: BudgetItem) => {
+    setBudgetItems(prev => {
+      if (prev.some(x => x.id === b.id)) return prev;
+      return [...prev, b];
+    });
+    if (isAuthenticated && user?.id && !b.isMock) {
+      setDocItem(user.id, 'budgetItems', b.id, b);
+    }
+  }, [isAuthenticated, user?.id]);
+
+  const addRuleItem = useCallback((r: BudgetRule) => {
+    setRules(prev => {
+      if (prev.some(x => x.id === r.id)) return prev;
+      return [...prev, r];
+    });
+    if (isAuthenticated && user?.id && !r.isMock) {
+      setDocItem(user.id, 'rules', r.id, r);
+    }
+  }, [isAuthenticated, user?.id]);
+
+  const updateExpenseItem = useCallback((id: string, updates: Partial<Expense>) => {
+    setExpenses(prev => prev.map(e => {
+      if (e.id === id) {
+        const updated = { ...e, ...updates };
+        if (isAuthenticated && user?.id && !e.isMock) {
+          setDocItem(user.id, 'expenses', id, updated);
+        }
+        return updated;
+      }
+      return e;
+    }));
+  }, [isAuthenticated, user?.id]);
+
+  const updateRecurringItem = useCallback((id: string, updates: Partial<RecurringItem>) => {
+    setRecurringItems(prev => prev.map(r => {
+      if (r.id === id) {
+        const updated = { ...r, ...updates };
+        if (isAuthenticated && user?.id && !r.isMock) {
+          setDocItem(user.id, 'recurringItems', id, updated);
+        }
+        return updated;
+      }
+      return r;
+    }));
+  }, [isAuthenticated, user?.id]);
+
+  const updateIncomeItem = useCallback((id: string, updates: Partial<Income>) => {
+    setIncomes(prev => prev.map(i => {
+      if (i.id === id) {
+        const updated = { ...i, ...updates };
+        if (isAuthenticated && user?.id && !i.isMock) {
+          setDocItem(user.id, 'incomes', id, updated);
+        }
+        return updated;
+      }
+      return i;
+    }));
+  }, [isAuthenticated, user?.id]);
+
+  const updateBillItem = useCallback((id: string, updates: Partial<Bill>) => {
+    setBills(prev => prev.map(b => {
+      if (b.id === id) {
+        const updated = { ...b, ...updates };
+        if (isAuthenticated && user?.id && !b.isMock) {
+          setDocItem(user.id, 'bills', id, updated);
+        }
+        return updated;
+      }
+      return b;
+    }));
+  }, [isAuthenticated, user?.id]);
+
+  const updateWealthItem = useCallback((id: string, updates: Partial<WealthItem>) => {
+    setWealthItems(prev => prev.map(w => {
+      if (w.id === id) {
+        let history = w.history || [];
+        if (updates.value !== undefined && updates.value !== w.value) {
+          history = [...history, { date: new Date().toISOString(), value: updates.value }];
+        }
+        const updated = { ...w, ...updates, history };
+        if (isAuthenticated && user?.id && !w.isMock) {
+          setDocItem(user.id, 'wealthItems', id, updated);
+        }
+        return updated;
+      }
+      return w;
+    }));
+  }, [isAuthenticated, user?.id]);
+
+  const updateBudgetItem = useCallback((id: string, updates: Partial<BudgetItem>) => {
+    setBudgetItems(prev => prev.map(b => {
+      if (b.id === id) {
+        const updated = { ...b, ...updates };
+        if (isAuthenticated && user?.id && !b.isMock) {
+          setDocItem(user.id, 'budgetItems', id, updated);
+        }
+        return updated;
+      }
+      return b;
+    }));
+  }, [isAuthenticated, user?.id]);
+
+  const updateRuleItem = useCallback((id: string, updates: Partial<BudgetRule>) => {
+    setRules(prev => prev.map(r => {
+      if (r.id === id) {
+        const updated = { ...r, ...updates };
+        if (isAuthenticated && user?.id && !r.isMock) {
+          setDocItem(user.id, 'rules', id, updated);
+        }
+        return updated;
+      }
+      return r;
+    }));
+  }, [isAuthenticated, user?.id]);
+
+  const deleteExpenseItem = useCallback((id: string) => {
+    setExpenses(prev => {
+      const target = prev.find(e => e.id === id);
+      if (target && isAuthenticated && user?.id && !target.isMock) {
+        deleteDocItem(user.id, 'expenses', id);
+      }
+      return prev.filter(e => e.id !== id);
+    });
+  }, [isAuthenticated, user?.id]);
+
+  const deleteRecurringItem = useCallback((id: string) => {
+    setRecurringItems(prev => {
+      const target = prev.find(r => r.id === id);
+      if (target && isAuthenticated && user?.id && !target.isMock) {
+        deleteDocItem(user.id, 'recurringItems', id);
+      }
+      return prev.filter(r => r.id !== id);
+    });
+  }, [isAuthenticated, user?.id]);
+
+  const deleteIncomeItem = useCallback((id: string) => {
+    setIncomes(prev => {
+      const target = prev.find(i => i.id === id);
+      if (target && isAuthenticated && user?.id && !target.isMock) {
+        deleteDocItem(user.id, 'incomes', id);
+      }
+      return prev.filter(i => i.id !== id);
+    });
+  }, [isAuthenticated, user?.id]);
+
+  const deleteBillItem = useCallback((id: string) => {
+    setBills(prev => {
+      const target = prev.find(b => b.id === id);
+      if (target && isAuthenticated && user?.id && !target.isMock) {
+        deleteDocItem(user.id, 'bills', id);
+      }
+      return prev.filter(b => b.id !== id);
+    });
+  }, [isAuthenticated, user?.id]);
+
+  const deleteWealthItem = useCallback((id: string) => {
+    setWealthItems(prev => {
+      const target = prev.find(w => w.id === id);
+      if (target && isAuthenticated && user?.id && !target.isMock) {
+        deleteDocItem(user.id, 'wealthItems', id);
+      }
+      return prev.filter(w => w.id !== id);
+    });
+  }, [isAuthenticated, user?.id]);
+
+  const deleteBudgetItem = useCallback((id: string) => {
+    setBudgetItems(prev => {
+      const target = prev.find(b => b.id === id);
+      if (target && isAuthenticated && user?.id && !target.isMock) {
+        deleteDocItem(user.id, 'budgetItems', id);
+      }
+      return prev.filter(b => b.id !== id);
+    });
+  }, [isAuthenticated, user?.id]);
+
+  const deleteRuleItem = useCallback((id: string) => {
+    setRules(prev => {
+      const target = prev.find(r => r.id === id);
+      if (target && isAuthenticated && user?.id && !target.isMock) {
+        deleteDocItem(user.id, 'rules', id);
+      }
+      return prev.filter(r => r.id !== id);
+    });
+  }, [isAuthenticated, user?.id]);
+
   if (isResetting || isLoading) return <div className="w-full h-screen bg-brand-bg flex items-center justify-center"><Loader2 className="animate-spin text-brand-primary" size={32} /></div>;
   if (!isAuthenticated) return <AuthScreen onLogin={(p) => { setUser(p); setIsAuthenticated(true); }} />;
 
@@ -843,18 +1182,8 @@ const App: React.FC = () => {
           <div className="flex-1">
             {currentView === 'Dashboard' && <Dashboard expenses={visibleExpenses} incomes={visibleIncomes} wealthItems={visibleWealth} budgetItems={visibleBudgetItems} bills={visibleBills} settings={settings} user={user} onCategorizeClick={() => setIsCategorizing(true)} onConfirmExpense={() => {}} onSmartAdd={() => {}} onNavigate={(v, f) => { setViewFilter(f || null); setCurrentView(v); }} viewDate={viewDate} onMonthChange={(d) => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + d, 1))} onGoToDate={() => {}} onAffordabilityCheck={() => setIsShowingAskMe(true)} />}
             {currentView === 'Ledger' && <Ledger expenses={visibleExpenses} incomes={visibleIncomes} wealthItems={visibleWealth} bills={visibleBills} rules={rules} budgetItems={visibleBudgetItems} settings={settings} onDeleteExpense={(id) => handleBulkDelete([id], 'expense')} onDeleteIncome={(id) => handleBulkDelete([id], 'income')} onUpdateExpense={handleUpdateExpense} onBulkUpdateExpense={handleBulkUpdateExpense} onBulkDelete={handleBulkDelete} onEditRecord={(r) => setEditingRecord(r)} onAddRecord={() => setIsAddingExpense(true)} onAddIncome={() => setIsAddingIncome(true)} onAddBulk={handleAddBulkToLedger} viewDate={viewDate} onMonthChange={(d) => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + d, 1))} addNotification={addNotification} showToast={showToast} onDeleteWealth={() => {}} onConfirm={() => {}} onGoToDate={() => {}} onImport={handleCSVImport} onDeduplicate={handleDeduplicate} initialFilter={viewFilter} />}
-            {currentView === 'Budget' && <BudgetPlanner budgetItems={visibleBudgetItems} recurringItems={visibleRecurringItems} expenses={visibleExpenses} bills={visibleBills} wealthItems={visibleWealth} settings={settings} onAddBudget={() => setIsAddingBudget(true)} onEditBudget={(b) => setEditingBudget(b)} onUpdateBudget={(id, updates) => setBudgetItems(prev => prev.map(b => b.id === id ? { ...b, ...updates } : b))} onDeleteBudget={(id) => setBudgetItems(prev => prev.filter(b => b.id !== id))} onPayBill={(b) => setSettlingBill(b)} onDeleteBill={(id) => setBills(p => p.filter(b => b.id !== id))} onEditBill={(b) => setEditingRecord(b)} onEditExpense={(e) => setEditingRecord(e)} onAddBillClick={() => setIsAddingBill(true)} onAddRecurringClick={() => setIsAddingExpense(true)} onEditRecurring={(r) => setEditingRecord(r)} onNavigate={(v, f) => { setViewFilter(f || null); setCurrentView(v); }} viewDate={viewDate} initialTab={viewFilter as any} />}
-            {currentView === 'Accounts' && <Accounts wealthItems={visibleWealth} expenses={visibleExpenses} incomes={visibleIncomes} bills={visibleBills} settings={settings} onUpdateWealth={(id, updates) => setWealthItems(p => p.map(w => {
-              if (w.id === id) {
-                const newItem = { ...w, ...updates };
-                if (updates.value !== undefined && updates.value !== w.value) {
-                  const history = w.history || [];
-                  newItem.history = [...history, { date: new Date().toISOString(), value: updates.value }];
-                }
-                return newItem;
-              }
-              return w;
-            }))} onDeleteWealth={(id) => setWealthItems(p => p.filter(w => w.id !== id))} onAddWealth={() => {}} onEditAccount={(a) => setEditingRecord({...a, mode: 'Account'})} onAddAccountClick={() => setIsAddingAccount(true)} onOpenCategoryManager={() => setIsShowingCategoryManager(true)} onAddTransferClick={() => setIsAddingTransfer(true)} onDeleteExpense={(id) => setExpenses(p => p.filter(e => e.id !== id))} onDeleteIncome={(id) => setIncomes(p => p.filter(i => i.id !== id))} onAddStatementTransactions={(accId, txs) => {
+            {currentView === 'Budget' && <BudgetPlanner budgetItems={visibleBudgetItems} recurringItems={visibleRecurringItems} expenses={visibleExpenses} bills={visibleBills} wealthItems={visibleWealth} settings={settings} onAddBudget={() => setIsAddingBudget(true)} onEditBudget={(b) => setEditingBudget(b)} onUpdateBudget={updateBudgetItem} onDeleteBudget={deleteBudgetItem} onPayBill={(b) => setSettlingBill(b)} onDeleteBill={deleteBillItem} onEditBill={(b) => setEditingRecord(b)} onEditExpense={(e) => setEditingRecord(e)} onAddBillClick={() => setIsAddingBill(true)} onAddRecurringClick={() => setIsAddingExpense(true)} onEditRecurring={(r) => setEditingRecord(r)} onNavigate={(v, f) => { setViewFilter(f || null); setCurrentView(v); }} viewDate={viewDate} initialTab={viewFilter as any} />}
+            {currentView === 'Accounts' && <Accounts wealthItems={visibleWealth} expenses={visibleExpenses} incomes={visibleIncomes} bills={visibleBills} settings={settings} onUpdateWealth={updateWealthItem} onDeleteWealth={deleteWealthItem} onAddWealth={() => {}} onEditAccount={(a) => setEditingRecord({...a, mode: 'Account'})} onAddAccountClick={() => setIsAddingAccount(true)} onOpenCategoryManager={() => setIsShowingCategoryManager(true)} onAddTransferClick={() => setIsAddingTransfer(true)} onDeleteExpense={deleteExpenseItem} onDeleteIncome={deleteIncomeItem} onAddStatementTransactions={(accId, txs) => {
               const enriched = txs.map(t => ({
                 ...t,
                 id: Math.random().toString(36).substring(2, 11),
@@ -863,10 +1192,16 @@ const App: React.FC = () => {
                 isImported: true,
                 isStatementTransaction: true
               }));
+              // Write real non-mock transactions to Firestore
+              enriched.forEach(ex => {
+                if (isAuthenticated && user?.id) {
+                  setDocItem(user.id, 'expenses', ex.id, ex);
+                }
+              });
               setExpenses(prev => [...prev, ...enriched]);
               showToast(`${txs.length} transactions imported from statement.`, 'success');
             }} />}
-            {currentView === 'Rules' && <RulesEngine rules={rules.filter(r => settings.dataFilter === 'user' ? !r.isMock : settings.dataFilter === 'mock' ? r.isMock : true)} settings={settings} onAddRule={() => setIsAddingRule(true)} onEditRule={(r) => setEditingRule(r)} onDeleteRule={(id) => setRules(p => p.filter(r => r.id !== id))} />}
+            {currentView === 'Rules' && <RulesEngine rules={rules.filter(r => settings.dataFilter === 'user' ? !r.isMock : settings.dataFilter === 'mock' ? r.isMock : true)} settings={settings} onAddRule={() => setIsAddingRule(true)} onEditRule={(r) => setEditingRule(r)} onDeleteRule={deleteRuleItem} />}
             {currentView === 'Notifications' && <NotificationPane notifications={notifications} onClose={() => setCurrentView('Dashboard')} onClear={() => setNotifications([])} isPage={true} />}
             {currentView === 'Profile' && <Settings settings={settings} user={user} onLogout={() => setIsAuthenticated(false)} onReset={handleReset} onUpdateAppTheme={(t) => setSettings(s => ({ ...s, appTheme: t }))} onUpdateCurrency={(c) => setSettings(s => ({ ...s, currency: c }))} onUpdateBaseIncome={(income) => setSettings(s => ({ ...s, monthlyIncome: income }))} onUpdateSplit={(split) => setSettings(s => ({ ...s, split }))} onExport={handleExport} onRestore={handleRestore} onAddBulk={() => {}} isSyncing={isSyncing} onLoadMockData={handleLoadMockData} onPurgeMockData={handlePurgeMockData} onUpdateDensity={(d) => setSettings(s => ({ ...s, density: d }))} onOpenCategoryManager={() => setIsShowingCategoryManager(true)} onToggleTheme={() => {}} onSync={() => {}} />}
           </div>
@@ -879,41 +1214,32 @@ const App: React.FC = () => {
       {(isAddingExpense || (editingRecord && !editingRecord.mode && !editingRecord.recordType?.includes('income') && !editingRecord.dueDate)) && <AddExpense settings={settings} wealthItems={wealthItems} initialData={editingRecord} onRegisterCategory={handleRegisterCategory} onAdd={(e, freq) => { 
         const id = Math.random().toString(36).substring(2, 11); 
         const enriched = categorizeWithAvoids(e);
-        setExpenses(p => [{ ...enriched, id } as Expense, ...p]); 
+        addExpenseItem({ ...enriched, id } as Expense); 
         if (freq && freq !== 'None') { 
           const recId = Math.random().toString(36).substring(2, 11); 
-          setRecurringItems(p => [{ id: recId, amount: e.amount, bucket: e.category, category: e.mainCategory, subCategory: e.subCategory, note: e.note || '', merchant: e.merchant, frequency: freq, nextDueDate: e.date, accountId: e.sourceAccountId, isMock: false }, ...p]); 
+          addRecurringItem({ id: recId, amount: e.amount, bucket: e.category, category: e.mainCategory, subCategory: e.subCategory, note: e.note || '', merchant: e.merchant, frequency: freq, nextDueDate: e.date, accountId: e.sourceAccountId, isMock: false }); 
         } 
         setIsAddingExpense(false); 
         showToast(freq !== 'None' ? "Subscription tracked." : "Expense logged.", 'success'); 
       }} onUpdate={(id, updates, freq) => { handleUpdateExpense(id, updates, freq); setEditingRecord(null); }} onDelete={(id) => { const isRec = recurringItems.some(r => r.id === id); if (isRec) handleBulkDelete([id], 'recurring'); else handleBulkDelete([id], 'expense'); setEditingRecord(null); }} onCancel={() => { setIsAddingExpense(false); setEditingRecord(null); }} />}
-      {(isAddingIncome || (editingRecord && editingRecord.recordType === 'income')) && <AddIncome settings={settings} wealthItems={wealthItems} initialData={editingRecord} onRegisterIncomeType={(type) => handleRegisterCategory('Uncategorized', 'Inflow', type)} onAdd={(i) => { setIncomes(p => [{ ...i, id: Math.random().toString(36).substring(2, 11) }, ...p]); setIsAddingIncome(false); showToast("Inflow recorded.", 'success'); }} onUpdate={(id, updates) => { setIncomes(p => p.map(i => i.id === id ? { ...i, ...updates } : i)); setEditingRecord(null); showToast("Income updated.", 'success'); }} onDelete={(id) => { setIncomes(p => p.filter(i => i.id !== id)); setEditingRecord(null); }} onCancel={() => { setIsAddingIncome(false); setEditingRecord(null); }} />}
-      {(isAddingBill || (editingRecord && editingRecord.dueDate)) && <AddBill settings={settings} wealthItems={wealthItems} initialData={editingRecord} onAddBills={(newBills) => { setBills(p => [...p, ...newBills]); setIsAddingBill(false); showToast("Obligation added.", 'success'); }} onUpdate={(id, updates) => { setBills(prev => prev.map(b => b.id === id ? { ...b, ...updates } : b)); setEditingRecord(null); }} onDelete={(id) => { setBills(p => p.filter(b => b.id !== id)); setEditingRecord(null); }} onCancel={() => { setIsAddingBill(false); setEditingRecord(null); }} />}
+      {(isAddingIncome || (editingRecord && editingRecord.recordType === 'income')) && <AddIncome settings={settings} wealthItems={wealthItems} initialData={editingRecord} onRegisterIncomeType={(type) => handleRegisterCategory('Uncategorized', 'Inflow', type)} onAdd={(i) => { const id = Math.random().toString(36).substring(2, 11); addIncomeItem({ ...i, id }); setIsAddingIncome(false); showToast("Inflow recorded.", 'success'); }} onUpdate={(id, updates) => { updateIncomeItem(id, updates); setEditingRecord(null); showToast("Income updated.", 'success'); }} onDelete={(id) => { deleteIncomeItem(id); setEditingRecord(null); }} onCancel={() => { setIsAddingIncome(false); setEditingRecord(null); }} />}
+      {(isAddingBill || (editingRecord && editingRecord.dueDate)) && <AddBill settings={settings} wealthItems={wealthItems} initialData={editingRecord} onAddBills={(newBills) => { newBills.forEach(b => addBillItem(b)); setIsAddingBill(false); showToast("Obligation added.", 'success'); }} onUpdate={(id, updates) => { updateBillItem(id, updates); setEditingRecord(null); }} onDelete={(id) => { deleteBillItem(id); setEditingRecord(null); }} onCancel={() => { setIsAddingBill(false); setEditingRecord(null); }} />}
       {(isAddingAccount || (editingRecord && editingRecord.mode === 'Account')) && <AddAccount settings={settings} initialData={editingRecord} onSave={(a) => { 
+        const id = Math.random().toString(36).substring(2, 11);
         const newAccount = { 
           ...a, 
-          id: Math.random().toString(36).substring(2, 11),
+          id,
           history: [{ date: new Date().toISOString(), value: a.value }]
         };
-        setWealthItems(p => [...p, newAccount]); 
+        addWealthItem(newAccount); 
         setIsAddingAccount(false); 
         showToast("Account registered.", 'success'); 
       }} onUpdate={(id, updates) => { 
-        setWealthItems(p => p.map(w => {
-          if (w.id === id) {
-            const newItem = { ...w, ...updates };
-            if (updates.value !== undefined && updates.value !== w.value) {
-              const history = w.history || [];
-              newItem.history = [...history, { date: new Date().toISOString(), value: updates.value }];
-            }
-            return newItem;
-          }
-          return w;
-        }));
+        updateWealthItem(id, updates);
         setEditingRecord(null); 
         setIsAddingAccount(false); 
         showToast("Account updated.", 'success'); 
-      }} onDelete={(id) => { setWealthItems(p => p.filter(w => w.id !== id)); setEditingRecord(null); setIsAddingAccount(false); }} onCancel={() => { setIsAddingAccount(false); setEditingRecord(null); }} onAddStatementTransactions={(accId, txs) => {
+      }} onDelete={(id) => { deleteWealthItem(id); setEditingRecord(null); setIsAddingAccount(false); }} onCancel={() => { setIsAddingAccount(false); setEditingRecord(null); }} onAddStatementTransactions={(accId, txs) => {
         const enriched = txs.map(t => ({
           ...t,
           id: Math.random().toString(36).substring(2, 11),
@@ -922,12 +1248,13 @@ const App: React.FC = () => {
           isImported: true,
           isStatementTransaction: true
         }));
-        setExpenses(prev => [...prev, ...enriched as Expense[]]);
+        enriched.forEach(ex => addExpenseItem(ex as Expense));
         showToast(`${txs.length} transactions imported from statement.`, 'success');
       }} />}
       {(isAddingRule || editingRule) && <AddRule settings={settings} initialData={editingRule} onAdd={(r) => { 
-        const newRule = { ...r, id: Math.random().toString(36).substring(2, 11) };
-        setRules(p => [...p, newRule]); 
+        const id = Math.random().toString(36).substring(2, 11);
+        const newRule = { ...r, id };
+        addRuleItem(newRule); 
         if ((r as any).applyToAll) {
           applyRuleToExpenses(newRule);
         }
@@ -935,33 +1262,24 @@ const App: React.FC = () => {
         showToast("Neural logic registered.", 'success'); 
       }} onUpdate={(id, updates) => { 
         const updatedRule = { ...rules.find(r => r.id === id), ...updates } as BudgetRule;
-        setRules(p => p.map(r => r.id === id ? { ...r, ...updates } : r)); 
+        updateRuleItem(id, updates); 
         if ((updates as any).applyToAll) {
           applyRuleToExpenses(updatedRule);
         }
         setEditingRule(null); 
         showToast("Neural logic recalibrated.", 'success'); 
-      }} onDelete={(id) => { setRules(p => p.filter(r => r.id !== id)); setEditingRule(null); }} onCancel={() => { setIsAddingRule(false); setEditingRule(null); }} />}
+      }} onDelete={(id) => { deleteRuleItem(id); setEditingRule(null); }} onCancel={() => { setIsAddingRule(false); setEditingRule(null); }} />}
       {isAddingTransfer && <AddTransfer settings={settings} wealthItems={wealthItems} onTransfer={(fromId, toId, amount, date, note) => { 
         const id1 = Math.random().toString(36).substring(2, 11);
         const id2 = Math.random().toString(36).substring(2, 11);
         const tDate = date || new Date().toISOString().split('T')[0];
-        setExpenses(p => [
-          { id: id1, amount, date: tDate, category: 'Uncategorized', mainCategory: 'Internal', subCategory: 'Transfer', merchant: 'Internal Transfer', note: `To: ${wealthItems.find(w => w.id === toId)?.alias || 'Unknown'} - ${note}`, isConfirmed: true, sourceAccountId: fromId },
-          ...p
-        ]);
-        setIncomes(p => [
-          { id: id2, amount, date: tDate, type: 'Other', note: `From: ${wealthItems.find(w => w.id === fromId)?.alias || 'Unknown'} - ${note}`, targetAccountId: toId },
-          ...p
-        ]);
-        setWealthItems(p => p.map(w => {
-          if (w.id === fromId) return { ...w, value: w.value - amount };
-          if (w.id === toId) return { ...w, value: w.value + amount };
-          return w;
-        }));
+        addExpenseItem({ id: id1, amount, date: tDate, category: 'Uncategorized', mainCategory: 'Internal', subCategory: 'Transfer', merchant: 'Internal Transfer', note: `To: ${wealthItems.find(w => w.id === toId)?.alias || 'Unknown'} - ${note}`, isConfirmed: true, sourceAccountId: fromId });
+        addIncomeItem({ id: id2, amount, date: tDate, type: 'Other', note: `From: ${wealthItems.find(w => w.id === fromId)?.alias || 'Unknown'} - ${note}`, targetAccountId: toId });
+        updateWealthItem(fromId, { value: (wealthItems.find(w => w.id === fromId)?.value || 0) - amount });
+        updateWealthItem(toId, { value: (wealthItems.find(w => w.id === toId)?.value || 0) + amount });
         showToast("Capital rebalanced.", 'success');
       }} onCancel={() => setIsAddingTransfer(false)} />}
-      {(isAddingBudget || editingBudget) && <BudgetGoalModal settings={settings} expenses={expenses} initialData={editingBudget} viewDate={viewDate} onSave={(b) => { setBudgetItems(p => [...p, { ...b, id: Math.random().toString(36).substring(2, 11) }]); setIsAddingBudget(false); }} onUpdate={(id, updates) => { setBudgetItems(p => p.map(b => b.id === id ? { ...b, ...updates } : b)); setEditingBudget(null); }} onDelete={(id) => { setBudgetItems(p => p.filter(b => b.id !== id)); setEditingBudget(null); }} onCancel={() => { setIsAddingBudget(false); setEditingBudget(null); }} />}
+      {(isAddingBudget || editingBudget) && <BudgetGoalModal settings={settings} expenses={expenses} initialData={editingBudget} viewDate={viewDate} onSave={(b) => { const id = Math.random().toString(36).substring(2, 11); addBudgetItem({ ...b, id }); setIsAddingBudget(false); }} onUpdate={(id, updates) => { updateBudgetItem(id, updates); setEditingBudget(null); }} onDelete={(id) => { deleteBudgetItem(id); setEditingBudget(null); }} onCancel={() => { setIsAddingBudget(false); setEditingBudget(null); }} />}
       {isShowingAskMe && <AskMe settings={settings} wealthItems={wealthItems} expenses={expenses} onCancel={() => setIsShowingAskMe(false)} />}
       {isShowingVersionLog && <VersionLog onClose={() => setIsShowingVersionLog(false)} />}
       {isCategorizing && <CategorizationModal settings={settings} expenses={expenses.filter(e => !e.isConfirmed)} onConfirm={handleUpdateExpense} onClose={() => setIsCategorizing(false)} />}

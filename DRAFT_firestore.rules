@@ -1,0 +1,180 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Catch-all safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Core Primitives ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // --- Entity Validation Helpers ---
+
+    function isValidUserProfile(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && data.email is string && data.email.size() <= 200;
+    }
+
+    function isValidExpense(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.amount is number
+        && data.date is string && data.date.size() <= 64
+        && data.category is string && data.category.size() <= 64
+        && data.mainCategory is string && data.mainCategory.size() <= 100
+        && data.isConfirmed is bool;
+    }
+
+    function isValidIncome(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.amount is number
+        && data.date is string && data.date.size() <= 64
+        && data.type is string && data.type.size() <= 64;
+    }
+
+    function isValidWealthItem(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.type is string && data.type.size() <= 64
+        && data.category is string && data.category.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && data.value is number
+        && data.date is string && data.date.size() <= 64;
+    }
+
+    function isValidBill(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.amount is number
+        && data.dueDate is string && data.dueDate.size() <= 64
+        && data.merchant is string && data.merchant.size() <= 200
+        && data.category is string && data.category.size() <= 64
+        && data.mainCategory is string && data.mainCategory.size() <= 100
+        && data.isPaid is bool
+        && data.frequency is string && data.frequency.size() <= 64;
+    }
+
+    function isValidBudgetItem(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && data.amount is number
+        && data.bucket is string && data.bucket.size() <= 64
+        && data.category is string && data.category.size() <= 100;
+    }
+
+    function isValidBudgetRule(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.keyword is string && data.keyword.size() <= 200
+        && data.category is string && data.category.size() <= 64
+        && data.mainCategory is string && data.mainCategory.size() <= 100;
+    }
+
+    function isValidRecurringItem(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.amount is number
+        && data.bucket is string && data.bucket.size() <= 64
+        && data.category is string && data.category.size() <= 100
+        && data.frequency is string && data.frequency.size() <= 64
+        && data.nextDueDate is string && data.nextDueDate.size() <= 64;
+    }
+
+    function isValidNotification(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.type is string && data.type.size() <= 64
+        && data.title is string && data.title.size() <= 200
+        && data.message is string && data.message.size() <= 2000
+        && data.timestamp is string && data.timestamp.size() <= 64
+        && data.read is bool;
+    }
+
+    // --- Secured Root user document ---
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUserProfile(incoming());
+      allow update: if isOwner(userId) && isValidUserProfile(incoming());
+      allow delete: if isOwner(userId);
+
+      // --- Expenses ---
+      match /expenses/{expenseId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(expenseId) && isValidExpense(incoming());
+        allow update: if isOwner(userId) && isValidId(expenseId) && isValidExpense(incoming());
+        allow delete: if isOwner(userId) && isValidId(expenseId);
+      }
+
+      // --- Incomes ---
+      match /incomes/{incomeId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(incomeId) && isValidIncome(incoming());
+        allow update: if isOwner(userId) && isValidId(incomeId) && isValidIncome(incoming());
+        allow delete: if isOwner(userId) && isValidId(incomeId);
+      }
+
+      // --- Wealth Items ---
+      match /wealthItems/{wealthItemId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(wealthItemId) && isValidWealthItem(incoming());
+        allow update: if isOwner(userId) && isValidId(wealthItemId) && isValidWealthItem(incoming());
+        allow delete: if isOwner(userId) && isValidId(wealthItemId);
+      }
+
+      // --- Bills ---
+      match /bills/{billId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(billId) && isValidBill(incoming());
+        allow update: if isOwner(userId) && isValidId(billId) && isValidBill(incoming());
+        allow delete: if isOwner(userId) && isValidId(billId);
+      }
+
+      // --- Budget Items ---
+      match /budgetItems/{budgetItemId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(budgetItemId) && isValidBudgetItem(incoming());
+        allow update: if isOwner(userId) && isValidId(budgetItemId) && isValidBudgetItem(incoming());
+        allow delete: if isOwner(userId) && isValidId(budgetItemId);
+      }
+
+      // --- Rules ---
+      match /rules/{ruleId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(ruleId) && isValidBudgetRule(incoming());
+        allow update: if isOwner(userId) && isValidId(ruleId) && isValidBudgetRule(incoming());
+        allow delete: if isOwner(userId) && isValidId(ruleId);
+      }
+
+      // --- Recurring Items ---
+      match /recurringItems/{recurringItemId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(recurringItemId) && isValidRecurringItem(incoming());
+        allow update: if isOwner(userId) && isValidId(recurringItemId) && isValidRecurringItem(incoming());
+        allow delete: if isOwner(userId) && isValidId(recurringItemId);
+      }
+
+      // --- Notifications ---
+      match /notifications/{notificationId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(notificationId) && isValidNotification(incoming());
+        allow update: if isOwner(userId) && isValidId(notificationId) && isValidNotification(incoming());
+        allow delete: if isOwner(userId) && isValidId(notificationId);
+      }
+    }
+  }
+}

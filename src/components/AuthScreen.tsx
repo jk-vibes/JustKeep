@@ -3,6 +3,8 @@ import { UserProfile } from '../types';
 import { LogIn, UserCircle, Sparkles, Fingerprint, Loader2, AlertCircle, ArrowRightCircle } from 'lucide-react';
 import { triggerHaptic } from '../utils/haptics';
 import BrandedLogo from './BrandedLogo';
+import { auth } from '../services/firebase';
+import { GoogleAuthProvider, signInWithCredential, signInAnonymously } from 'firebase/auth';
 
 interface AuthScreenProps {
   onLogin: (user: UserProfile) => void;
@@ -35,21 +37,20 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
 
             setAuthStatus('Synchronizing Neural Identity...');
             try {
-              const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-                headers: { Authorization: `Bearer ${response.access_token}` },
-              });
-              const userInfo = await userInfoResponse.json();
+              const credential = GoogleAuthProvider.credential(null, response.access_token);
+              const userCredential = await signInWithCredential(auth, credential);
+              const fbUser = userCredential.user;
 
               onLogin({
-                id: userInfo.sub,
-                name: userInfo.name,
-                email: userInfo.email,
-                avatar: userInfo.picture,
+                id: fbUser.uid,
+                name: fbUser.displayName || 'Google User',
+                email: fbUser.email || '',
+                avatar: fbUser.photoURL || 'https://api.dicebear.com/7.x/bottts/svg?seed=' + fbUser.uid,
                 accessToken: response.access_token
               });
             } catch (err) {
               setAuthStatus('Handshake Failure');
-              setError('Failed to fetch user profile from Google.');
+              setError('Failed to authenticate with Firebase Auth.');
               setLoading(false);
             }
           },
@@ -82,21 +83,27 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin }) => {
     tokenClient.requestAccessToken();
   };
 
-  const handleGuestSignIn = () => {
+  const handleGuestSignIn = async () => {
     setError(null);
     triggerHaptic();
     setGuestLoading(true);
     setAuthStatus('Initializing Local Sandbox...');
     
-    setTimeout(() => {
+    try {
+      const userCredential = await signInAnonymously(auth);
+      const fbUser = userCredential.user;
       onLogin({
-        id: 'guest-' + Math.random().toString(36).substring(7),
+        id: fbUser.uid,
         name: 'Guest User',
         email: 'guest@local.host',
-        avatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=Guest',
+        avatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=' + fbUser.uid,
       });
       setGuestLoading(false);
-    }, 1200);
+    } catch (err) {
+      console.error("Anonymouse signin error:", err);
+      setError('Failed to initialize local sandbox.');
+      setGuestLoading(false);
+    }
   };
 
   const buttonBaseClass = "group w-full bg-white text-slate-950 font-black py-5 rounded-[28px] flex items-center justify-center gap-3 shadow-[0_15px_40px_-10px_rgba(255,255,255,0.1)] hover:scale-[1.02] active:scale-95 transition-all duration-300 uppercase tracking-[0.2em] text-[11px]";
